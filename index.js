@@ -93,6 +93,10 @@ module.exports = (function(){
             const ClassList = function(node){
                 this._node = node;
             };
+            var forEach = function(el, fn, scope){
+                for( var i = 0, _i = el.length; i < _i; i++)
+                    fn.call(scope || el[i], el[i],i,el);
+            };
             ClassList.prototype = {
 
                 add: function() {
@@ -123,6 +127,7 @@ module.exports = (function(){
 
                 this.classList = new ClassList(this);
                 this._listeners = {};
+                this.style = {};
             };
             var Attribute = function(key, value){
                 this.name = key;
@@ -343,12 +348,20 @@ module.exports = (function(){
                     }
                 },
                 set: function (value) {
-                    this._innerText = value
-                        .replace(/&/g, "&amp;")
-                        .replace(/</g, "&lt;")
-                        .replace(/>/g, "&gt;")
-                        //.replace(/"/g, "&quot;")
-                        .replace(/'/g, "&#039;");
+                    if(this.nodeType !== 3){
+                        let textNode = new Node( 'TextNode' );
+                        textNode.nodeType = 3;
+                        textNode.innerText = value;
+
+                        this.childNodes = [textNode];
+                    }else{
+                        this._innerText = value
+                            .replace( /&/g, "&amp;" )
+                            .replace( /</g, "&lt;" )
+                            .replace( />/g, "&gt;" )
+                            //.replace(/"/g, "&quot;")
+                            .replace( /'/g, "&#039;" );
+                    }
                 }
             });
             return function(val){
