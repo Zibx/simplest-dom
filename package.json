@@ -1,0 +1,20 @@
+{
+  "name": "simplest-dom",
+  "version": "0.0.13",
+  "description": "A simple DOM subset implementation",
+  "main": "index.js",
+  "author": "Zibx",
+  "license": "MPL-2.0",
+  "scripts": {},
+  "files": [
+    "index.js"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/AndCake/nano-dom.git"
+  },
+  "devDependencies": {
+    "mocha": "*",
+    "chai": "*"
+  }
+}
