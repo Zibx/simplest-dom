@@ -11,7 +11,7 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/AndCake/nano-dom.git"
+    "url": "https://github.com/Zibx/simplest-dom.git"
   },
   "devDependencies": {
     "mocha": "*",
