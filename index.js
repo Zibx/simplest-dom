@@ -94,6 +94,7 @@ module.exports = (function(){
                 this._node = node;
             };
             ClassList.prototype = {
+
                 add: function() {
                     forEach(arguments, function(name) {
                         if (!this.contains(name)) {
@@ -121,14 +122,24 @@ module.exports = (function(){
                 this.attributes = [];
 
                 this.classList = new ClassList(this);
+                this._listeners = {};
             };
             var Attribute = function(key, value){
                 this.name = key;
                 this.value = value;
             };
 
-
+            var slice = Array.prototype.slice;
             Node.prototype = {
+                addEventListener: function(evtName, fn){
+                    (this._listeners[evtName] || (this._listeners[evtName] = [])).push(fn);
+                },
+                emit: function(evtName){
+                    var _self = this, args = slice.call(arguments,1);
+                    (this._listeners[evtName] || []).forEach(function(fn){
+                        fn.apply(_self, args);
+                    });
+                },
                 appendChild: function(child){
                     this.childNodes.push(child);
                     child.parentNode = this;
