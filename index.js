@@ -12,7 +12,7 @@ module.exports = (function(){
 
     if(typeof document === 'undefined'){
         doc = (function(){
-            const attrRegExp = /\s*([^>="'\s]+)\s*?=?\s*?(?:"([^"]*)"|'([^']*)'|([^\s>]))/g;
+            const attrRegExp = /\s*([^>="'\s]+)\s*?=?\s*?(?:"([^"]*)"|'([^']*)'|([^\s>]*))/g;
             let parseAttrs = function(attrs) {
                 const _self = this;
                 attrs.replace(attrRegExp, function(a,b,c,d) {
@@ -23,7 +23,7 @@ module.exports = (function(){
             };
             var c = 0;
             // take any tag with arguments.
-            const tagRegExp = /<(\/?!?[A-Za-z0-9_-]+)((?:\s+(?:[^>="'\s\/]+\s*(?:=\s*(?:"[^"]*"|'[^']*'|[^\s>\/]))?))*)\s*(\/?)>/;
+            const tagRegExp = /<(\/?!?[A-Za-z0-9_-]+)((?:\s+(?:[^>="'\s\/]+\s*(?:=\s*(?:"[^"]*"|'[^']*'|[^\s>\/]*))?))*)\s*(\/?)>/;
             let parseHTML = function(text){
                 const tags = [];
                 let root = new Node('root');
@@ -77,10 +77,14 @@ module.exports = (function(){
                         if (closingTag === stack[stack.length - 1].nodeName) {
                             stack.pop();
                             root = stack[stack.length - 1];
-                        } else if (closingTag === stack[stack.length - 2].nodeName) {
-                            stack.pop();
-                            stack.pop();
-                            root = stack[stack.length - 1];
+                        } else {
+                            if(stack[stack.length - 2] === void 0)
+                                debugger
+                            if (closingTag === stack[stack.length - 2].nodeName) {
+                                stack.pop();
+                                stack.pop();
+                                root = stack[stack.length - 1];
+                            }
                         }
                     }
                     text = text.substr(chunkLength);
@@ -168,6 +172,7 @@ module.exports = (function(){
                 },
                 createTextNode: function(val){
                     const textNode = new Node('textnode');
+                    textNode.nodeType = 3;
                     textNode.innerText = val;
                     return textNode;
                 },
@@ -361,6 +366,20 @@ module.exports = (function(){
                             .replace( />/g, "&gt;" )
                             //.replace(/"/g, "&quot;")
                             .replace( /'/g, "&#039;" );
+                    }
+                }
+            });
+            Object.defineProperty(Node.prototype, 'nodeValue', {
+                get: function(){
+                    if(this.nodeType === 3){
+                        return this._innerText;
+                    }else{
+                        return null;
+                    }
+                },
+                set: function(val){
+                    if(this.nodeType === 3){
+                        this._innerText = val;
                     }
                 }
             });
