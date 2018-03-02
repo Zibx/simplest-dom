@@ -160,8 +160,13 @@ module.exports = (function(){
                 },
                 setAttribute: function(k, v){
                     const attr = new Attribute(k, v);
+                    var exists = this.attributes[k];
                     this.attributes[k] = attr;
-                    this.attributes.push(attr);
+                    if(exists){
+                        this.attributes.splice(this.attributes.indexOf(exists),1,attr);
+                    }else{
+                        this.attributes.push(attr);
+                    }
 
                 },
                 getAttribute: function(k){
@@ -325,18 +330,23 @@ module.exports = (function(){
                 Object.defineProperty(Node.prototype, name, attr(name));
             });
 
+            var deCamelRegExp = /([a-z][A-Z])/g;
+            var deCamel = function(text){
+                return text.replace(deCamelRegExp, function(a,b,c){return b.charAt(0)+'-'+b.charAt(1).toLowerCase();});
+            };
             Object.defineProperty(Node.prototype, 'outerHTML', {
                 get: function () {
-                    var node = this, attributes, i;
-                    /*for( i in this.attributes )
-                        attributes.push({name: i, val: i+'="'+this.getAttribute(i)+'"'});
-                    attributes.sort(function(a, b){
-                        return a.name < b.name ? -1 : 1;
-                    });
-                    attributes = attributes.map(function(attr){
-                        return attr.val;
-                    });*/
-                    attributes = this.attributes.length?' '+this.attributes.map(function(attr){
+                    var node = this, attributes, i,
+                        attributesList = this.attributes.slice();
+                    if(Object.keys(this.style).length>0){
+                        var style = this.style,
+                            styleList = [];
+                        for(i in style){
+                            styleList.push(deCamel(i)+':'+style[i])
+                        }
+                        attributesList.push({name: 'style', value: styleList.join(';')});
+                    }
+                    attributes = attributesList.length?' '+attributesList.map(function(attr){
                             let val = attr.value;
 
                             return attr.name+(val?'='+(val.indexOf('"')>-1?'\''+val+'\'':'"'+val+'"'):'');
@@ -360,12 +370,12 @@ module.exports = (function(){
 
                         this.childNodes = [textNode];
                     }else{
-                        this._innerText = value
+                        this._innerText = value;/*
                             .replace( /&/g, "&amp;" )
                             .replace( /</g, "&lt;" )
                             .replace( />/g, "&gt;" )
                             //.replace(/"/g, "&quot;")
-                            .replace( /'/g, "&#039;" );
+                            .replace( /'/g, "&#039;" );*/
                     }
                 }
             });
