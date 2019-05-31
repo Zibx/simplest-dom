@@ -143,6 +143,11 @@ module.exports = (function(){
                 addEventListener: function(evtName, fn){
                     (this._listeners[evtName] || (this._listeners[evtName] = [])).push(fn);
                 },
+                removeEventListener: function(evtName, fn) {
+                    const evts = this._listeners[evtName];
+                    if(evts)
+                        this._listeners[evtName] = evts.filter(function(evt) { return evt !== fn;});
+                },
                 emit: function(evtName){
                     var _self = this, args = slice.call(arguments,1);
                     (this._listeners[evtName] || []).forEach(function(fn){
@@ -167,7 +172,13 @@ module.exports = (function(){
                     }else{
                         this.attributes.push(attr);
                     }
-
+                },
+                removeAttribute: function(k) {
+                    var exists = this.attributes[k];
+                    if(exists){
+                        delete this.attributes[ k ];
+                        this.attributes.splice(this.attributes.indexOf(exists),1);
+                    }
                 },
                 getAttribute: function(k){
                     return (this.attributes[k] || {}).value;
