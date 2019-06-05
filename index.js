@@ -319,7 +319,7 @@ module.exports = (function(){
 
                     }
                     return this.childNodes.map(function(node){
-                        return node.nodeName === 'textnode' ? node.innerText : node.outerHTML;
+                        return node.nodeName === 'textnode' ? node.textContent : node.outerHTML;
                     }).join('');
                 },
                 set: function (value) {
