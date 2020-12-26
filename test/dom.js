@@ -6,9 +6,10 @@ var assert = require('chai').assert;
 describe('Light DOM Implementation', function(){
 
 	it('can parse this', function(){
-	    var code = '<a href="#property-"></a><span class="memberAnchor" id=property-></span>';
+	    var code = `<a href="#property-"></a><span class="memberAnchor" g='h' id=property-></span>`;
         var document = new Document( code );
-        assert.equal( document.documentElement.outerHTML, code, 'parsed code' );
+        assert.equal( document.documentElement.outerHTML,
+					'<html><head></head><body><a href="#property-"></a><span class="memberAnchor" g="h" id="property-"></span></body></html>', 'parsed code' );
 	});
 
 
