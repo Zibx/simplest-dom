@@ -1,6 +1,6 @@
 {
   "name": "simplest-dom",
-  "version": "0.0.20",
+  "version": "0.0.21",
   "description": "A simple DOM subset implementation",
   "main": "index.js",
   "author": "Zibx",
