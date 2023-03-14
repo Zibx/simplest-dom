@@ -4,19 +4,22 @@
  * *
  */
 ;// QUOKKA 2018
-// By zibx on 2/2/18.
+// By Kubota Ivan on 2/2/18.
 
 module.exports = (function(){
     'use strict';
-	  let doc, Node, DocumentFragment;
+    let doc, Node, DocumentFragment;
 
     if(typeof document === 'undefined'){
         doc = (function(){
-            const attrRegExp = /\s*([^>="'\s]+)\s*?=?\s*?(?:"([^"]*)"|'([^']*)'|([^\s]*))/g;
+            const attrRegExp = /\s*([^>="'\s]+)\s*?(=?)\s*?(?:"([^"]*)"|'([^']*)'|([^\s]*))/g;
             let parseAttrs = function(attrs) {
                 const _self = this;
-                attrs.replace(attrRegExp, function(a,b,c,d,e) {
-                    _self.setAttribute(b, c !== void 0 ? c : d !== void 0 ? d : e !== void 0 ? e : '');
+                attrs.replace(attrRegExp, function(a,b,equal,c,d,e) {
+                    _self.setAttribute(b,
+                      c !== void 0 ? c : d !== void 0 ? d : e !== void 0 ? e : null,
+                      c !== void 0 ? 1: d !== void 0 ? 2 : equal !== '' ? 3 : 0
+                    );
 
                 });
 
@@ -24,6 +27,7 @@ module.exports = (function(){
             var c = 0;
             // take any tag with arguments.
             const tagRegExp = /<(\/?!?[A-Za-z0-9_-]+)((?:\s+(?:[^>="'\s\/]+\s*(?:=\s*(?:"[^"]*"|'[^']*'|[^\s>\/]*))?))*)\s*(\/?)>/;
+            const commentRegExp = /<(!--)(.*?--)>/;
             let parseHTML = function(text){
                 const tags = [];
                 let root = new Node('root');
@@ -38,20 +42,43 @@ module.exports = (function(){
                     let tag = false;
                     let closingTag = false;
                     let selfClosing = false;
-                    const tagData = text.match(tagRegExp);
+                    let tagData = text.match(tagRegExp);
+                    let isComment = false;
 
                     if(tagData === null){
                         chunkLength = chunkTextLength = text.length;
                     }else {
+                        if(tagData[1] === '!--'){
+                            // COMMENT CASE
+                            var closeCommentPos = text.substr(tagData.index+4)
+                              .indexOf('-->')+4;
+
+                            var commentMatch = [
+                                text.substr(tagData.index, closeCommentPos - tagData.index+3),
+                                '!--'
+                            ];
+                            commentMatch.push(commentMatch[0].substr(4,commentMatch[0].length-5));
+                            commentMatch[3] = '';
+                            commentMatch.index = tagData.index;
+                            tagData = commentMatch;
+                            //tagData.index = text.indexOf( commentMatch[0] )
+                            isComment = true;
+                        }
                         const tagLength = tagData[0].length,
-                            tagName = tagData[1],
-                            tagAttrs = tagData[2];
+                          tagName = tagData[1],
+                          tagAttrs = tagData[2];
 
                         selfClosing = tagData[3];
 
                         if(tagName.charAt(0) !== '/'){
                             tag = new Node(tagName);
-                            parseAttrs.call(tag, tagAttrs)
+                            if(isComment){
+                                tag.nodeType = 8;
+                                tag._innerText = tagAttrs;
+                            }else {
+                                parseAttrs.call( tag, tagAttrs )
+                                tag._selfClose = selfClosing;
+                            }
                         }else{
                             closingTag = tagName.substr(1).toLowerCase();
                         }
@@ -59,7 +86,6 @@ module.exports = (function(){
                         chunkTextLength = tagData.index;
                         chunkLength = tagData.index+tagLength;
                     }
-
 
                     if(chunkTextLength){
                         let textNode = new Node('TextNode');
@@ -102,7 +128,6 @@ module.exports = (function(){
                     fn.call(scope || el[i], el[i],i,el);
             };
             ClassList.prototype = {
-
                 add: function() {
                     forEach(arguments, function(name) {
                         if (!this.contains(name)) {
@@ -117,14 +142,14 @@ module.exports = (function(){
                 },
                 toggle: function(name) {
                     return this.contains(name)
-                        ? (this.remove(name), false) : (this.add(name), true);
+                      ? (this.remove(name), false) : (this.add(name), true);
                 },
-                contains: function(name) {
+                contains: function(name) { // REWRITE THIS
                     return regExp(name).test(this._node.className);
                 }
             };
 
-			      Node = function(type){
+            Node = function(type){
                 this.nodeName = type.toLowerCase();
                 this.childNodes = [];
                 this.attributes = [];
@@ -133,9 +158,10 @@ module.exports = (function(){
                 this._listeners = {};
                 this.style = {};
             };
-            var Attribute = function(key, value){
+            var Attribute = function(key, value, quoteType){
                 this.name = key;
                 this.value = value;
+                this.quoteType = quoteType;
             };
 
             var slice = Array.prototype.slice;
@@ -157,7 +183,7 @@ module.exports = (function(){
                 appendChild: function(child){
                     if( child instanceof DocumentFragment ){
                         for( var i = 0, _i = child.childNodes.length; i < _i; i++ ){
-                            var childNode = newChild.childNodes[ i ];
+                            var childNode = child.childNodes[ i ];
                             this.childNodes.push( childNode );
                             childNode.parentNode = this;
                         }
@@ -172,7 +198,7 @@ module.exports = (function(){
                         this.childNodes.splice.apply( this.childNodes, [ index, 0 ].concat( newChild.childNodes ) );
                         for( var i = 0, _i = newChild.childNodes.length; i < _i; i++ ){
                             var childNode = newChild.childNodes[ i ];
-                            childNode.parentNode
+                            childNode.parentNode = this;
                         }
                     }else{
                         this.childNodes.splice( index, 0, newChild );
@@ -184,21 +210,22 @@ module.exports = (function(){
                     child.parentNode = null;
                     this.childNodes.splice(index, 1);
                 },
-                setAttribute: function(k, v){
-                    const attr = new Attribute(k, v);
-                    var exists = this.attributes[k];
+                setAttribute: function(k, v, quoteType){
+                    const attr = new Attribute(k, v, quoteType);
+                    var exists = this.attributes.hasOwnProperty(k);
                     this.attributes[k] = attr;
                     if(exists){
-                        this.attributes.splice(this.attributes.indexOf(exists),1,attr);
+                        this.attributes.splice(this.attributes.indexOf(this.attributes[k]),1,attr);
                     }else{
                         this.attributes.push(attr);
                     }
                 },
                 removeAttribute: function(k) {
-                    var exists = this.attributes[k];
+                    var exists = this.attributes.hasOwnProperty(k);
+
                     if(exists){
                         delete this.attributes[ k ];
-                        this.attributes.splice(this.attributes.indexOf(exists),1);
+                        this.attributes.splice(this.attributes.indexOf(this.attributes[k]),1);
                     }
                 },
                 getAttribute: function(k){
@@ -214,7 +241,6 @@ module.exports = (function(){
                     return textNode;
                 },
                 querySelectorAll: function(selector){
-
                     let result = [];
                     this.children.forEach( function( child ){
                         result = result.concat( matchesSelector( child, selector ) ? child : [], child.querySelectorAll( selector ) );
@@ -233,7 +259,7 @@ module.exports = (function(){
                 getElementsByTagName: function(selector){
                     return this.querySelectorAll(selector);
                 },
-				        nodeType: 1,
+                nodeType: 1,
                 contains: function(el){
                     while( el.parentNode ){
                         if( el.parentNode === this )
@@ -244,24 +270,20 @@ module.exports = (function(){
                 }
             };
 
-              var FakeEvent = function() {};
-              FakeEvent.prototype = {
-                stopPropagation: function() {
-
-                },
-                preventDefault: function() {
-
-                }
-              }
-              'click,mousemove,mouseup,mousedown,keydown'.split(',').forEach(function(a){
-                Node.prototype[a] = function() {
-                  return this.emit(a, new FakeEvent());
+            var FakeEvent = function() {};
+            FakeEvent.prototype = {
+                stopPropagation: function() {},
+                preventDefault: function() {}
+            };
+            'click,mousemove,mouseup,mousedown,keydown'.split( ',' ).forEach( function( a ) {
+                Node.prototype[ a ] = function() {
+                    return this.emit( a, new FakeEvent() );
                 };
-              });
+            } );
 
             function matchesSelector(tag, selector) {
                 let selectors = selector.split(/\s*,\s*/),
-                    match;
+                  match;
                 for (let all in selectors) {
 
                     //if (match = selectors[all].match(/(?:([\w*:_-]+)?\[([\w:_-]+)(?:(\$|\^|\*)?=(?:(?:'([^']*)')|(?:"([^"]*)")))?\])|(?:\.([\w_-]+))|([\w*:_-]+)/g)) {
@@ -300,8 +322,8 @@ module.exports = (function(){
                                     var attrVal = attrTokens.slice( 1 ).join( '=' );
 
                                     if(
-                                        (attrVal.charAt( 0 ) === '"' && attrVal.charAt( attrVal.length - 1 ) === '"') ||
-                                        (attrVal.charAt( 0 ) === '\'' && attrVal.charAt( attrVal.length - 1 ) === '\'')
+                                      (attrVal.charAt( 0 ) === '"' && attrVal.charAt( attrVal.length - 1 ) === '"') ||
+                                      (attrVal.charAt( 0 ) === '\'' && attrVal.charAt( attrVal.length - 1 ) === '\'')
                                     ){
                                         attrVal = attrVal.substr( 1, attrVal.length - 2 );
                                     }
@@ -319,12 +341,21 @@ module.exports = (function(){
                 }
                 return true;
             }
+            const mayClose = {img: 1};
             const noClose = {
                 br: 1,
                 hr: 1,
                 img: 1,
                 meta: 1,
-                link: 1
+                link: 1,
+                '!doctype': 1,
+                '!--':1,
+                'line': 1,
+                path: 1
+            };
+            const autoClose = {
+                '!doctype': 1,
+                'meta': 1
             };
             Object.defineProperty(Node.prototype, 'className', {
                 get: function(){
@@ -363,7 +394,7 @@ module.exports = (function(){
 
                     }
                     return this.childNodes.map(function(node){
-						return node.nodeName === 'textnode' ? node.textContent || node._innerText || '' : node.outerHTML;
+                        return node.nodeName === 'textnode' ? node.textContent || node._innerText || '' : node.outerHTML;
                     }).join('');
                 },
                 set: function (value) {
@@ -392,22 +423,42 @@ module.exports = (function(){
             Object.defineProperty(Node.prototype, 'outerHTML', {
                 get: function () {
                     var node = this, attributes, i,
-                        attributesList = this.attributes.slice();
+                      attributesList = this.attributes.slice();
+                    if(node.nodeName === 'document' || node.nodeName === 'documentfragment'){
+                        return this.innerHTML;
+                    }
+
+                    if(node.nodeType === 8){
+                        return '<!--'+ node._innerText +'>';
+                    }
+
                     if(Object.keys(this.style).length>0){
                         var style = this.style,
-                            styleList = [];
+                          styleList = [];
                         for(i in style){
                             styleList.push(deCamel(i)+':'+style[i])
                         }
                         attributesList.push({name: 'style', value: styleList.join(';')});
                     }
                     attributes = attributesList.length?' '+attributesList.map(function(attr){
-                            let val = attr.value;
+                        let val = attr.value;
 
-                            return attr.name+(val?'='+(val.indexOf('"')>-1?'\''+val+'\'':'"'+val+'"'):'');
-                        }).join(' ') : '';
+                        return attr.name+(attr.quoteType !== 0 ? '='+(val.indexOf('"')>-1?'\''+val+'\'':'"'+val+'"'):'');
+                    }).join(' ') : '';
 
-                    return noClose[node.nodeName] ? '<'+node.nodeName+(attributes.length?attributes+'/':' /')+'>': '<'+node.nodeName+(attributes.length?attributes:'')+'>'+node.innerHTML+'</'+node.nodeName+'>';
+                    if(node.nodeName in autoClose){
+                        return '<'+node.nodeName+attributes+'>';
+                    }
+
+                    var startHTML = '<'+node.nodeName;
+
+                    if(node.nodeName in mayClose && node.nodeName in noClose){
+                        return startHTML +(attributes.length?attributes+'':' ')+ (node._selfClose?'/':'')+ '>';
+                    }
+
+                    return node.nodeName in noClose ?
+                      startHTML +(attributes.length?attributes+'/':' /')+ '>':
+                      startHTML +(attributes.length?attributes:'')+'>'+node.innerHTML+'</'+node.nodeName+'>';
                 }
             });
 
@@ -448,12 +499,13 @@ module.exports = (function(){
                     }
                 }
             });
-            return function(val){
+            var DocumentFactory = function(val, doNotFindHTML){
                 var doc = new Node('document');
                 if(val){
                     doc.innerHTML = val;
                 }
 
+                var topDoc = doc;
 
                 if(!doc.querySelector('body') || ! doc.querySelector('html')){
                     var html = new Node('html');
@@ -468,15 +520,21 @@ module.exports = (function(){
 
                     doc.body = doc.querySelector('body');
                 }else{
-                    doc = doc.querySelector('html');
+                    doc = doc.querySelector( 'html' );
                 }
                 doc.body = doc.querySelector('body');
                 doc.head = doc.querySelector('head');
                 doc.documentElement = doc;
 
-                doc.createDocumentFragment = function() {
-                  return new DocumentFragment();
-                }
+                doc.createDocumentFragment = function(arr) {
+                    var fragment = new DocumentFragment();
+                    if(Array.isArray(arr)) {
+                        arr.forEach( function( item ) {
+                            fragment.appendChild( item );
+                        } );
+                    }
+                    return fragment;
+                };
                 doc.DocumentFragment = DocumentFragment;
 
                 global.document = doc;
@@ -487,27 +545,37 @@ module.exports = (function(){
 
                 // require.extensions['.js'] = tmp;
 
+                if(doNotFindHTML)
+                    return topDoc;
+
                 return doc;
             };
-            /*
-            return {
-                createElement: function(type){
-                    return new Node(type);
-                },
-                createTextNode: function(val){
-                    var textNode = new Node('TextNode');
-                    textNode.innerText = val;
-                    return textNode;
+            DocumentFactory.createDocumentFragment = function(arr) {
+                var fragment = new DocumentFragment();
+                if(Array.isArray(arr)) {
+                    arr.forEach( function( item ) {
+                        fragment.appendChild( item );
+                    } );
                 }
-            };*/
+                return fragment;
+            };
+            DocumentFactory.createElement = function(type){
+                return new Node(type);
+            };
+            DocumentFactory.createTextNode = function(val){
+                var textNode = new Node('TextNode');
+                textNode.innerText = val;
+                return textNode;
+            };
+            return DocumentFactory;
         })();
     }else{
         doc = document;
     }
-	DocumentFragment = function() {
-		Node.call(this, 'DocumentFragment');
-	};
-	DocumentFragment.prototype = new Node('DocumentFragment');
+    DocumentFragment = function() {
+        Node.call(this, 'DocumentFragment');
+    };
+    DocumentFragment.prototype = new Node('DocumentFragment');
 
     return doc;
 })();

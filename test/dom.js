@@ -14,7 +14,7 @@ describe('Light DOM Implementation', function(){
 
 
     it('Can parse a document', function(){
-        var code = '<html><head><meta charset="UTF-8"/><title>Mein Titel</title></head><body><link arel="zino-tag" data-local="test.html"/><test></test></body></html>';
+        var code = '<html><head><meta charset="UTF-8"><title>Mein Titel</title></head><body><link arel="zino-tag" data-local="test.html"/><test></test></body></html>';
         var document = new Document( '<!DOCTYPE html>' + code );
         assert.equal( document.documentElement.outerHTML, code, 'parsed code' );
 
@@ -130,7 +130,7 @@ describe('Light DOM Implementation', function(){
 		document.body.children[0].innerHTML = '<test>1234<div><img src="test">test</div>Me';
 
 		// autoclose tags
-		assert.equal(document.body.innerHTML, '<div><test>1234<div><img src="test"/>test</div>Me</test></div>');
+		assert.equal(document.body.innerHTML, '<div><test>1234<div><img src="test">test</div>Me</test></div>');
 	});
 	
 	it('element access', function(){
