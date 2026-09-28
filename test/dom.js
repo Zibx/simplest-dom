@@ -143,4 +143,194 @@ describe('Light DOM Implementation', function(){
 		assert.equal(document.getElementById('bold').outerHTML, '<b __ready="true" id="bold"></b>');
 	});
 
+
+	// A node lives in ONE parent: appending a node that already has one MOVES it.
+	// These used to push into the new parent while the old one still listed the
+	// same element, so it appeared in two childNodes lists at once.
+	it('appendChild moves a node instead of duplicating it', function(){
+		document = new Document('<div id="a"></div><div id="b"></div>');
+		var a = document.getElementById('a'), b = document.getElementById('b');
+		var kid = document.createElement('span');
+
+		a.appendChild(kid);
+		assert.equal(a.childNodes.length, 1, 'kid is in a');
+
+		b.appendChild(kid);
+		assert.equal(b.childNodes.length, 1, 'kid moved to b');
+		assert.equal(a.childNodes.length, 0, 'and is gone from a');
+		assert.equal(kid.parentNode, b, 'parentNode follows the move');
+	});
+
+	it('insertBefore moves a node instead of duplicating it', function(){
+		document = new Document('<div id="a"></div><div id="b"><i id="ref"></i></div>');
+		var a = document.getElementById('a'), b = document.getElementById('b');
+		var ref = document.getElementById('ref');
+		var kid = document.createElement('span');
+
+		a.appendChild(kid);
+		b.insertBefore(kid, ref);
+
+		assert.equal(a.childNodes.length, 0, 'gone from the old parent');
+		assert.equal(b.childNodes.length, 2, 'b has ref + kid');
+		assert.equal(b.childNodes[0], kid, 'inserted BEFORE ref');
+	});
+
+	// null refChild means append (DOM spec). This used to hit indexOf === -1 and
+	// splice(-1, 0, x), which silently inserted before the LAST child.
+	it('insertBefore(node, null) appends', function(){
+		document = new Document('<div id="p"><i id="one"></i><i id="two"></i></div>');
+		var p = document.getElementById('p');
+		var kid = document.createElement('span');
+
+		p.insertBefore(kid, null);
+
+		assert.equal(p.childNodes.length, 3);
+		assert.equal(p.childNodes[2], kid, 'appended, not inserted before the last child');
+	});
+
+	it('insertBefore with a refChild that is not ours appends', function(){
+		document = new Document('<div id="p"><i id="one"></i><i id="two"></i></div><div id="other"><b id="stranger"></b></div>');
+		var p = document.getElementById('p');
+		var stranger = document.getElementById('stranger');
+		var kid = document.createElement('span');
+
+		p.insertBefore(kid, stranger);
+
+		assert.equal(p.childNodes.length, 3);
+		assert.equal(p.childNodes[2], kid, 'appended rather than landing before the last child');
+	});
+
+	// splice(-1, 1) used to drop the LAST child when the argument was not ours.
+	it('removeChild of a node that is not a child leaves the list alone', function(){
+		document = new Document('<div id="p"><i id="one"></i><i id="two"></i></div>');
+		var p = document.getElementById('p');
+		var stranger = document.createElement('span');
+
+		p.removeChild(stranger);
+
+		assert.equal(p.childNodes.length, 2, 'nothing was removed');
+		assert.equal(p.childNodes[1].getAttribute('id'), 'two', 'and the last child survived');
+	});
+
+	it('appendChild drains a DocumentFragment, like a browser', function(){
+		document = new Document('<div id="p"></div>');
+		var p = document.getElementById('p');
+		var frag = document.createDocumentFragment([
+			document.createElement('i'), document.createElement('b')
+		]);
+
+		p.appendChild(frag);
+
+		assert.equal(p.childNodes.length, 2, 'both children moved across');
+		assert.equal(frag.childNodes.length, 0, 'fragment is empty afterwards');
+		assert.equal(p.childNodes[0].parentNode, p, 'parentNode re-pointed');
+	});
+
+	// document.activeElement never changed before — not on .focus(), not on a
+	// dispatched focus event — so every focus-dependent branch in a consumer read
+	// as "unfocused" and was effectively untested.
+	it('focus() sets document.activeElement and fires the handler', function(){
+		document = new Document('<input id="one"><input id="two">');
+		var one = document.getElementById('one');
+		var fired = 0;
+
+		one.addEventListener('focus', function(){ fired++; });
+		one.focus();
+
+		assert.equal(document.activeElement, one, 'activeElement follows focus');
+		assert.equal(fired, 1, 'focus handler ran');
+	});
+
+	it('focusing another element blurs the previous one first', function(){
+		document = new Document('<input id="one"><input id="two">');
+		var one = document.getElementById('one'), two = document.getElementById('two');
+		var order = [];
+
+		one.addEventListener('blur', function(){
+			// The browser has already moved activeElement by the time blur fires.
+			order.push('blur:' + (document.activeElement === two ? 'two' : 'other'));
+		});
+		two.addEventListener('focus', function(){ order.push('focus'); });
+
+		one.focus();
+		two.focus();
+
+		assert.equal(document.activeElement, two);
+		assert.equal(order.join(','), 'blur:two,focus');
+	});
+
+	it('blur() clears activeElement back to body', function(){
+		document = new Document('<input id="one">');
+		var one = document.getElementById('one');
+		var fired = 0;
+		one.addEventListener('blur', function(){ fired++; });
+
+		one.focus();
+		one.blur();
+
+		assert.equal(document.activeElement, document.body, 'nothing focused reads as body');
+		assert.equal(fired, 1);
+	});
+
+	it('re-focusing the already focused element is a no-op', function(){
+		document = new Document('<input id="one">');
+		var one = document.getElementById('one');
+		var fired = 0;
+		one.addEventListener('focus', function(){ fired++; });
+
+		one.focus();
+		one.focus();
+
+		assert.equal(fired, 1, 'second focus did not re-fire');
+	});
+
+
+	// Every `new Document()` overwrites global.document, so focus must resolve the
+	// node's OWN document by walking up to the root — otherwise focusing in the
+	// first document would move activeElement onto the most recently created one.
+	it('focus targets the node OWN document, not the newest global one', function(){
+		var docA = new Document('<input id="a">');
+		var a = docA.getElementById('a');
+		var docB = new Document('<input id="b">');   // this reassigned global.document
+		var b = docB.getElementById('b');
+
+		a.focus();
+
+		assert.equal(docA.activeElement, a, 'docA tracks its own focus');
+		assert.equal(docB.activeElement, docB.body, 'docB was left untouched');
+
+		b.focus();
+		assert.equal(docB.activeElement, b);
+		assert.equal(docA.activeElement, a, 'docA still unchanged');
+	});
+
+	// Widgets are commonly built and focused BEFORE being mounted.
+	it('focus works on a detached element via the ambient document', function(){
+		document = new Document('<div id="p"></div>');
+		var loose = document.createElement('input');
+		var fired = 0;
+		loose.addEventListener('focus', function(){ fired++; });
+
+		loose.focus();
+
+		assert.equal(fired, 1, 'handler still runs when unmounted');
+		assert.equal(document.activeElement, loose, 'ambient document records it');
+	});
+
+	it('a node moved between documents focuses in its NEW document', function(){
+		var docA = new Document('<div id="pa"></div>');
+		var pa = docA.getElementById('pa');
+		var docB = new Document('<div id="pb"></div>');
+		var pb = docB.getElementById('pb');
+
+		var kid = docA.createElement('input');
+		pa.appendChild(kid);
+		pb.appendChild(kid);       // moves across documents
+
+		kid.focus();
+
+		assert.equal(docB.activeElement, kid, 'lands in the document it now lives in');
+		assert.equal(docA.activeElement, docA.body, 'old document untouched');
+	});
+
 });

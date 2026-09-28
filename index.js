@@ -165,6 +165,32 @@ module.exports = (function(){
             };
 
             var slice = Array.prototype.slice;
+            // A node lives in ONE parent. appendChild/insertBefore used to push
+            // into the new parent without unlinking from the old one, so the same
+            // element appeared in two childNodes lists at once — the browser MOVES
+            // it. Called by both, and by nothing else.
+            // Which document owns this node? `createElement` returns a bare Node with
+            // no back-reference, so walk up to the root instead: the factory marks the
+            // document with nodeType 9. A DETACHED node (a widget built but not yet
+            // mounted) has no root document — fall back to the ambient one if a
+            // consumer assigned it, as the README suggests, so focusing an unmounted
+            // element still works. Deliberately NOT `global.document` alone: that is
+            // overwritten by the most recently constructed document, so it would move
+            // activeElement onto the wrong one as soon as a second document exists.
+            var ownerDocumentOf = function(node){
+                var el = node;
+                while( el.parentNode ) el = el.parentNode;
+                if( el.nodeType === 9 ) return el;
+                return typeof global !== 'undefined' && global.document && global.document.nodeType === 9 ?
+                  global.document : null;
+            };
+            var detachFromParent = function(node){
+                var parent = node.parentNode;
+                if( !parent || !parent.childNodes ) return;
+                var index = parent.childNodes.indexOf( node );
+                if( index !== -1 ) parent.childNodes.splice( index, 1 );
+                node.parentNode = null;
+            };
             Node.prototype = {
                 addEventListener: function(evtName, fn){
                     (this._listeners[evtName] || (this._listeners[evtName] = [])).push(fn);
@@ -180,42 +206,96 @@ module.exports = (function(){
                         fn.apply(_self, args);
                     });
                 },
+                // document.activeElement used to never change — not on .focus(), not
+                // on a dispatched focus event — so every focus-dependent branch in a
+                // consumer read as "unfocused" and was effectively untested.
+                // Order matches the browser: the old element blurs FIRST, and
+                // activeElement already points at the new one when 'focus' fires.
+                focus: function(){
+                    var doc = ownerDocumentOf( this );
+                    if( doc ){
+                        if( doc.activeElement === this ) return;
+                        var prev = doc.activeElement;
+                        doc.activeElement = this;
+                        if( prev && prev !== this && prev.emit ) prev.emit('blur');
+                    }
+                    this.emit('focus');
+                },
+                blur: function(){
+                    var doc = ownerDocumentOf( this );
+                    // Nothing focused is <body> in a browser, not null.
+                    if( doc && doc.activeElement === this ) doc.activeElement = doc.body || null;
+                    this.emit('blur');
+                },
                 appendChild: function(child){
                     if( child instanceof DocumentFragment ){
-                        for( var i = 0, _i = child.childNodes.length; i < _i; i++ ){
-                            var childNode = child.childNodes[ i ];
+                        // Snapshot: detaching each child mutates the fragment's own
+                        // childNodes, so iterating it live would skip every other one.
+                        // Draining it is also what a browser does — a fragment is
+                        // empty after you append it.
+                        var moving = slice.call( child.childNodes );
+                        for( var i = 0, _i = moving.length; i < _i; i++ ){
+                            var childNode = moving[ i ];
+                            detachFromParent( childNode );
                             this.childNodes.push( childNode );
                             childNode.parentNode = this;
                         }
                     }else{
+                        detachFromParent( child );
                         this.childNodes.push( child );
                         child.parentNode = this;
                     }
                 },
                 insertBefore: function(newChild, refChild){
-                    const index = this.childNodes.indexOf( refChild );
+                    // refChild null/undefined means APPEND (DOM spec), and a refChild
+                    // that is not ours used to give indexOf === -1, where splice(-1,...)
+                    // silently inserted before the LAST child. Both now append.
+                    var index = refChild == null ? -1 : this.childNodes.indexOf( refChild );
+                    if( index === -1 ) index = this.childNodes.length;
                     if( newChild instanceof DocumentFragment ){
-                        this.childNodes.splice.apply( this.childNodes, [ index, 0 ].concat( newChild.childNodes ) );
-                        for( var i = 0, _i = newChild.childNodes.length; i < _i; i++ ){
-                            var childNode = newChild.childNodes[ i ];
-                            childNode.parentNode = this;
+                        var moving = slice.call( newChild.childNodes );
+                        for( var i = 0, _i = moving.length; i < _i; i++ ){
+                            detachFromParent( moving[ i ] );
+                        }
+                        // Detaching may have removed nodes sitting before `index`
+                        // (re-inserting this parent's own children), so re-resolve it.
+                        if( refChild != null ){
+                            var reIndex = this.childNodes.indexOf( refChild );
+                            index = reIndex === -1 ? this.childNodes.length : reIndex;
+                        }else{
+                            index = this.childNodes.length;
+                        }
+                        this.childNodes.splice.apply( this.childNodes, [ index, 0 ].concat( moving ) );
+                        for( var j = 0, _j = moving.length; j < _j; j++ ){
+                            moving[ j ].parentNode = this;
                         }
                     }else{
+                        detachFromParent( newChild );
+                        if( refChild != null ){
+                            var refIndex = this.childNodes.indexOf( refChild );
+                            index = refIndex === -1 ? this.childNodes.length : refIndex;
+                        }else{
+                            index = this.childNodes.length;
+                        }
                         this.childNodes.splice( index, 0, newChild );
                         newChild.parentNode = this;
                     }
                 },
                 removeChild: function(child){
-                    const index = this.childNodes.indexOf(child);
+                    var index = this.childNodes.indexOf(child);
+                    // Not ours: splice(-1, 1) used to drop the LAST child instead.
+                    if( index === -1 ) return child;
                     child.parentNode = null;
                     this.childNodes.splice(index, 1);
+                    return child;
                 },
                 setAttribute: function(k, v, quoteType){
                     const attr = new Attribute(k, v, quoteType);
                     var exists = this.attributes.hasOwnProperty(k);
+                    var old = this.attributes[k];
                     this.attributes[k] = attr;
                     if(exists){
-                        this.attributes.splice(this.attributes.indexOf(this.attributes[k]),1,attr);
+                        this.attributes.splice(this.attributes.indexOf(old),1,attr);
                     }else{
                         this.attributes.push(attr);
                     }
@@ -432,13 +512,17 @@ module.exports = (function(){
                         return '<!--'+ node._innerText +'>';
                     }
 
-                    if(Object.keys(this.style).length>0){
-                        var style = this.style,
-                          styleList = [];
-                        for(i in style){
-                            styleList.push(deCamel(i)+':'+style[i])
+                    if(typeof this.style === 'string'){
+                        attributesList.push( { name: 'style', value: this.style } );
+                    }else {
+                        if( Object.keys( this.style ).length > 0 ) {
+                            var style = this.style,
+                              styleList = [];
+                            for( i in style ) {
+                                styleList.push( deCamel( i ) + ':' + style[ i ] )
+                            }
+                            attributesList.push( { name: 'style', value: styleList.join( ';' ) } );
                         }
-                        attributesList.push({name: 'style', value: styleList.join(';')});
                     }
                     attributes = attributesList.length?' '+attributesList.map(function(attr){
                         let val = attr.value;
@@ -539,6 +623,10 @@ module.exports = (function(){
 
                 global.document = doc;
                 doc.nodeType = 9;
+                // Nothing is focused yet, and a browser reports <body> for that,
+                // never null — so a consumer's `activeElement === el` check is false
+                // without having to guard for undefined first.
+                doc.activeElement = doc.body || null;
                 doc.ownerDocument = doc;
                 doc.nodeName = 'html';
                 global.window = {document: doc};
@@ -563,10 +651,225 @@ module.exports = (function(){
                 return new Node(type);
             };
             DocumentFactory.createTextNode = function(val){
-                var textNode = new Node('TextNode');
+                const textNode = new Node('TextNode');
+                textNode.nodeType = 3;
                 textNode.innerText = val;
                 return textNode;
             };
+
+
+
+
+            var ArraySlice = [].slice;
+            var svgNS = 'http://www.w3.org/2000/svg';
+            var customElementClassNameSetter = {};
+            var D = {};
+            D.cls = function() {
+                return D._cls(arguments, [], 0);
+            };
+            D.Text =  DocumentFactory.createTextNode;
+            D.appendChild = function(el, subEl){
+                var type = typeof subEl;
+
+                if(subEl === null){
+                    return ;
+                }
+                var notObject = type !== 'object';
+                var isHook = !notObject && ('hook' in subEl);
+
+
+                if(isHook){
+                    type = 'function'; notObject = true;
+                }
+                if( notObject ){
+                    el.appendChild( D.Text( subEl ) );
+                }else if('dom' in subEl){
+                    subEl.dom.__cmp = subEl;
+                    D.appendChild(el, subEl.dom);
+                }else if( Array.isArray(subEl) ){
+                    subEl.forEach(function(subEl){ D.appendChild( el, subEl ); });
+                }else{
+                    el.appendChild( subEl );
+                }
+            };
+            D.join = function(arr, delimiter){
+                var out = [], isFn = typeof delimiter === 'function';
+
+                for( var i = 0, _i = arr.length - 1; i < _i; i++ ){
+                    out.push(arr[i], isFn?delimiter(i):delimiter);
+                }
+                if(i < _i+1)
+                    out.push(arr[i]);
+                return out;
+            };
+
+            var dpID = 1;
+            var DataPiece = function(id){this.id = id;};
+            DataPiece.prototype = {value: void 0, update: function(){}};
+            var DataPieceFactory = function(refs, fn, scope) {
+                var id = dpID++;
+                var dp = new DataPiece(id);
+                refs.push(dp);
+                fn.call(scope, function(val) {
+                    dp.value = val;
+                    dp.update();
+                });
+                return dp;
+            };
+            D._cls = function(args, refs, depth) {
+                var out = [], i = 0, _i = args.length, token, tmp, key;
+
+                for(;i<_i;i++){
+                    token = args[i];
+                    if(typeof token === 'string' && token){
+                        out.push( token );
+                    }else if(typeof token === 'object'){
+                        if(token instanceof DataPiece){
+                            token.value && out.push( token.value );
+                        }else if ( token.hook ){
+                            args[i] = DataPieceFactory(refs, token.hook, token);
+                        }else if(Array.isArray(token)){
+                            tmp = D._cls(token, refs, depth+1);
+                            // TODO check for push tmp
+                            tmp && out.push( tmp );
+                        }else{
+                            for(key in token){
+                                if(token[key] === null)
+                                    continue;
+                                if(token[key] instanceof DataPiece){
+                                    token[key].value && out.push(key);
+                                }else if(typeof token[key] === 'function'){
+                                    token[ key ] = DataPieceFactory(refs, token[ key ]);
+                                }else if(typeof token[key] === 'object' && token[key].hook){
+                                    token[key] = DataPieceFactory(refs, token[ key ].hook, token[key])
+                                }else{
+                                    token[ key ] && out.push( key );
+                                }
+                            }
+                        }
+                    }else if(typeof token === 'function'){
+                        args[i] = DataPieceFactory(refs, args[i]);
+                    }
+                }
+                return depth === 0 && refs.length ? D.__cls(args, refs): out.join(' ');
+            };
+            var setters = {
+                cls: function(el) {
+                    return function(cls) {
+                        var tagName = el.tagName.toLowerCase();
+                        if( tagName in customElementClassNameSetter ){
+                            customElementClassNameSetter[tagName](el, cls);
+                        }else{
+                            el.className = D.cls.apply(D, arguments);
+                        }
+                    }
+                },
+                attr: function(el, attrName) {
+                    return function(val) {
+                        if(val !== void 0 && val !== false){
+                            el.setAttribute( attrName, val );
+                        }else{
+                            el.removeAttribute(attrName)
+                        }
+                    }
+                },
+                style: function(s, styleProp) {
+                    return function(val) {
+                        if(val !== void 0 && val !== false){
+                            s[styleProp] = val;
+                        }else{
+                            delete s[styleProp];
+                        }
+                    }
+                }
+            };
+
+            var used = {
+                cls: true, className: true, 'class': true, classname: true,
+                attr: true, style: true, renderTo: true,
+                prop: true, bind: true,
+                on: true, renderto: true, el: true
+            };
+            // It is a simple version of the react-vanilla
+            DocumentFactory.h = function(type, cfg){
+                cfg = cfg || {};
+                var cls = cfg.cls || cfg['class'] || cfg.className,
+                  style = cfg.style,
+
+                  attr = cfg.attr || {},
+                  prop = cfg.prop,
+                  on = cfg.on || {},
+                  renderTo = cfg.renderTo,
+                  el = cfg.el || document.createElement( type );
+
+                var i, _i, name;
+
+                for(i in cfg)
+                    if( cfg.hasOwnProperty(i)){
+                        name = i.toLowerCase();
+                        if(name in used)
+                            continue;
+
+                        if(!DocumentFactory._rawEvents && name.substr(0, 2) === 'on'){
+                            // it is an event
+                            on[ name.substr( 2 ) ] = cfg[ i ];
+                        }else{
+                            // attribute
+                            attr[i] = cfg[i];
+                        }
+
+                    }
+
+                if( cls ){
+                    setters.cls(el)(cls);
+                }
+
+                if( style ){
+                    if(typeof style === 'string'){
+                        el.style = style;
+                    }else{
+                        for( i in style ){
+                            var s = el.style;
+                            if(style.hasOwnProperty( i )){
+                                if( typeof style[ i ] === 'function' ){
+                                    style[ i ]( setters.style( s, i ) );
+                                }else if(typeof style[ i ] === 'object'&& style[ i ] !== null && style[ i ].hook){
+                                    style[ i ].hook(setters.style(s, i));
+                                }else{
+                                    setters.style( s, i )( style[ i ] );
+                                }
+                            }
+                        }
+                        //NS.apply( el.style, style );
+                    }
+                }
+
+                for( i in attr ){
+                    if(attr.hasOwnProperty( i )){
+                        setters.attr( el, i )( attr[ i ] );
+                    }
+                }
+
+                for( i in prop ){
+                    prop.hasOwnProperty( i ) && ( el[ i ] = prop[ i ] );
+                }
+
+                for( i in on ){
+                    on.hasOwnProperty( i ) && el.addEventListener( i, on[ i ] );
+                }
+
+                for( i = 2, _i = arguments.length; i < _i; i++ ){
+                    var child = arguments[ i ];
+                    D.appendChild( el, child );
+                }
+
+                if( renderTo ){
+                    D.appendChild( renderTo, el );
+                }
+
+                return el;
+            };
+
             return DocumentFactory;
         })();
     }else{
